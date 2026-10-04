@@ -68,17 +68,24 @@ class AppBuildTests(unittest.TestCase):
                 self.assertEqual(result.read_text(encoding='utf-8'), expected)
 
     def test_android_and_windows_propagate_one_edition_to_core_flutter_and_package(self):
-        root = Path(__file__).resolve().parent
+        scripts = Path(__file__).resolve().parent
+        project = scripts.parent
         for target in ['android', 'windows']:
             for enabled in [False, True]:
                 with self.subTest(target=target, all_sources=enabled):
-                    script = root / f'build_{target}.py'
-                    arguments = [str(script)] + (['--all-sources'] if enabled else [])
-                    with mock.patch.object(sys, 'argv', arguments), \
-                            mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
-                            mock.patch('shutil.which', return_value='/tools/flutter'), \
-                            mock.patch('subprocess.run') as run:
-                        runpy.run_path(str(script), run_name='__main__')
+                    script = scripts / f'build_{target}.py'
+                    arguments = ['--all-sources'] if enabled else []
+                    with tempfile.TemporaryDirectory(prefix='build-version-test-') as temporary:
+                        with mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
+                                mock.patch('shutil.which', return_value='/tools/flutter'), \
+                                mock.patch('subprocess.run') as run:
+                            if target == 'android':
+                                from build_android import main as build_android_main
+                                build_android_main(arguments, project_root=project,
+                                                   build_meta_dir=Path(temporary) / '.build-meta')
+                            else:
+                                with mock.patch.object(sys, 'argv', [str(script), *arguments]):
+                                    runpy.run_path(str(script), run_name='__main__')
                     calls = [call.args[0] for call in run.call_args_list]
                     native = next(call for call in calls if any(str(arg).endswith('build_native.py') for arg in call))
                     flutter = next(call for call in calls if 'build' in call)
@@ -88,32 +95,30 @@ class AppBuildTests(unittest.TestCase):
                     self.assertIn('--dart-define=ALL_SOURCES=' + str(enabled).lower(), flutter)
                     self.assertIn('core.buildAllSources=' + str(enabled).lower(), BuildVariant(enabled).linker_flags)
 
-
     def test_android_armv7_target_is_forwarded_without_building_or_launching(self):
-        script = Path(__file__).resolve().parent / 'build_android.py'
-        arguments = [str(script), '--all-sources', '--abi', 'armeabi-v7a']
-        with mock.patch.object(sys, 'argv', arguments), \
-                mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
-                mock.patch('shutil.which', return_value='/tools/flutter'), \
-                mock.patch('subprocess.run') as run:
-            runpy.run_path(str(script), run_name='__main__')
+        scripts = Path(__file__).resolve().parent
+        project = scripts.parent
+        with tempfile.TemporaryDirectory(prefix='build-version-test-') as temporary:
+            with mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
+                    mock.patch('shutil.which', return_value='/tools/flutter'), \
+                    mock.patch('subprocess.run') as run:
+                from build_android import main as build_android_main
+                build_android_main(['--all-sources', '--abi', 'armeabi-v7a'],
+                                   project_root=project,
+                                   build_meta_dir=Path(temporary) / '.build-meta')
         calls = [call.args[0] for call in run.call_args_list]
         self.assertEqual(len(calls), 4)
-        native = next(
-            call for call in calls
-            if any(str(arg).endswith('build_native.py') for arg in call))
-        flutter = next(call for call in calls if 'build' in call)
-        package = next(
-            call for call in calls
-            if any(str(arg).endswith('package_release.py') for arg in call))
+        native = next(call for call in calls if any(str(arg).endswith('build_native.py') for arg in call))
+        flutter = next(call for call in calls if len(call) > 2 and call[1:3] == ['build', 'apk'])
+        package = next(call for call in calls if any(str(arg).endswith('package_release.py') for arg in call))
         self.assertEqual(native[native.index('--abi') + 1], 'armeabi-v7a')
         self.assertIn('--all-sources', native)
-        self.assertEqual(
-            flutter[flutter.index('--target-platform') + 1], 'android-arm')
+        self.assertEqual(flutter[flutter.index('--target-platform') + 1], 'android-arm')
         self.assertIn('--split-per-abi', flutter)
         self.assertIn('--dart-define=ALL_SOURCES=true', flutter)
+        self.assertIn('--build-number', flutter)
         self.assertEqual(package[package.index('--abi') + 1], 'armeabi-v7a')
         self.assertIn('--all-sources', package)
-
+        self.assertIn('--build-number', package)
 if __name__ == '__main__':
     unittest.main()

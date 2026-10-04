@@ -750,6 +750,8 @@ python3 scripts/build_android.py --cn-mirrors
 
 首条默认生成红果鉴，第二条生成含全部站源的真果鉴。`--all-sources` 可以与 `--abi`、`--cn-mirrors` 组合，例如 `python3 scripts/build_android.py --all-sources --abi arm64-v8a --cn-mirrors`。
 
+Android 每次成功构建都会在忽略提交的 `.build-meta/android-version-state.json` 中持久记录版本码。第一次从 `pubspec.yaml` 的构建号开始，之后在进程锁保护下分配更高号码，并在原生核心、Flutter APK 与打包均成功后原子写入；构建失败不推进版本。分 ABI APK 的新版本码也会高于此工作树先前成功构建的 APK。请在同一工作树持续构建并保留 `.build-meta/`；新克隆没有该本地状态，会从 `pubspec.yaml` 基准号重新开始。Android `versionName` 仍取现有版本号（例如 `0.2.56`），分发文件名会包含实际自动构建号。
+
 
 ### Android 32 位 ARMv7（`armeabi-v7a`）
 
@@ -757,28 +759,26 @@ python3 scripts/build_android.py --cn-mirrors
 
 可复现构建环境以仓库 CI 和锁定配置为准：Flutter stable `3.47.4`（Dart `3.12+`）、Go `1.24.1+`（版本下限见 `native/go.mod`）、Python `3.12`、Temurin JDK `17`、Android SDK `36`、Android NDK `28.2.13676358`。Android Gradle Plugin 为 `9.1.0`，Gradle Wrapper 为 `9.3.1`，Kotlin Gradle Plugin 为 `2.4.0`。使用 Android SDK Command-line Tools 并先接受 SDK licenses；设置 `ANDROID_HOME`（或 `ANDROID_SDK_ROOT`），NDK 默认从 `$ANDROID_HOME/ndk/28.2.13676358` 读取，也可通过 `ANDROID_NDK_HOME` 指定。Dart 依赖按仓库 `pubspec.lock` 锁定，构建脚本使用 `flutter pub get --enforce-lockfile`。
 
-从仓库根目录明确指定 32 位 ABI；默认不传 `--all-sources` 仍构建红果鉴，真果鉴需显式加入该参数：
+Gradle 仍只有一个 `app` module（不是两个 `productFlavors`）；现有 `ALL_SOURCES` 构建开关同时控制站源和应用显示名，并选择不同 Android application ID：红果鉴沿用 `com.duanju.duanju_app`，真果鉴固定使用 `com.duanju.duanju_app.zhenguojian`。AndroidX Startup 等依赖若以标准 `${applicationId}` 占位符生成 authority，会随最终 ID 自动分开；主 Manifest 没有写死 provider authority。
 
+32 位 ARMv7 两个产品均有单独入口：
 ~~~sh
-python3 scripts/build_android.py --abi armeabi-v7a
-python3 scripts/build_android.py --all-sources --abi armeabi-v7a
+scripts/build_android_armv7_hongguojian.sh
+scripts/build_android_armv7_zhenguojian.sh
+scripts/build_android_armv7_hongguojian.sh --cn-mirrors
 ~~~
+兼容旧命令 `scripts/build_android_armv7.sh` 仍默认构建真果鉴；它也可显式接受 `hongguojian` 或 `zhenguojian` 作为首个参数。两款专用脚本都定位仓库根目录、检查 Python、Flutter、Go（`1.24.1+`）、JDK 17、Android SDK Platform 36 及 NDK `28.2.13676358`，固定构建 `armeabi-v7a`，只让真果鉴加入 `--all-sources`，其他构建选项（例如 `--cn-mirrors`）转交现有构建器。
 
-如需重复执行全站源 ARMv7 构建，可在仓库根目录直接运行下列命令；从其他工作目录调用时，使用该克隆的绝对或相对脚本路径，脚本会根据自身位置定位仓库根目录：
-~~~sh
-scripts/build_android_armv7.sh
-scripts/build_android_armv7.sh --cn-mirrors
-~~~
-脚本会定位仓库根目录、检查 Python、Flutter、Go（`1.24.1+`）、JDK 17、Android SDK Platform 36 及 NDK 28.2.13676358，并调用现有 `scripts/build_android.py`；它固定加入 `--abi armeabi-v7a --all-sources`，不改变现有构建器的默认发布行为，也不含机器专用 SDK 路径或签名凭据。构建依赖需预先安装；SDK 通过 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 指定，非默认位置的 NDK 可用 `ANDROID_NDK_HOME` 指定。额外参数原样传给构建器，例如 `--cn-mirrors`；构建器的 `--abi` 为追加选项，若再传其他 ABI 会额外生成对应分包，单独 ARMv7 构建请勿追加其他 ABI。
+红果鉴输出名形如 `dist/android/hongguojian-0.2.56+<自动构建号>-armeabi-v7a.apk`，包名维持已有正常构建身份；真果鉴为 `dist/android/zhenguojian-0.2.56+<自动构建号>-armeabi-v7a.apk`。Flutter `--build-number` 负责 Android versionCode；脚本根据已成功构建的 ABI 码值分配全局递增的底数，以免从一个 ABI 改构另一个 ABI 时出现降级。此状态仅写入已忽略的 `.build-meta/`，不含在 Git 提交中。
 
-默认中间 APK 位于 `build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk`，打包后的全站源 APK 位于 `dist/android/zhenguojian-<pubspec.yaml 版本号>-armeabi-v7a.apk`。该包装脚本不创建或更改签名文件：`android/key.properties` 存在时使用其中配置的证书；否则沿用 Gradle 本机 debug 测试证书。安装测试包前应确认签名适合目标设备上已有的应用；测试证书不适用于正式发布。
+包装脚本不创建或更改签名文件：存在 `android/key.properties` 时使用其配置的证书，否则沿用本机 debug 测试证书。要覆盖安装同一 application ID，目标设备现有 APK 的 versionCode 必须更低，且签名证书必须完全一致；后续构建也必须继续使用同一证书。源码中的正常 application ID 让红果鉴保留原升级身份，但旧红果 APK 的实际最高版本码和签名尚未直接检查，无法保证首次 ARMv7 构建可覆盖安装。旧版曾让两个产品共用 `com.duanju.duanju_app`，系统无法辨别设备上的旧包实际是哪一版；若旧包是真果鉴，新红果鉴仍会指向这个 ID，只有版本码更高且证书一致时才能覆盖。新版真果鉴改用 `.zhenguojian`，系统会把它视作独立新应用；旧共享包不会原位升级到新真果鉴，旧数据也不会自动迁移。现有 `0.2.56+62` 构建号下，干净状态首次 ARMv7 生成的版本码为 `1063`；若旧红果安装的码值不低于此数，也需先提高基准。
 
-`--abi` 会传给原生 Go 核心构建和 APK 打包；原生构建使用 NDK 的 Android API 26 编译器及 `GOARM=7`，Flutter 目标平台为 `android-arm`，并生成按 ABI 拆分的 Release APK。只传 `--abi armeabi-v7a` 时不会改动脚本默认的红果鉴发布行为；不传 `--abi` 仍沿用原先构建所有支持 ABI 的行为。此流程只下载/解析构建依赖、编译和打包，不启动应用，也不请求红果或其他站源 API；不要把 `flutter run`、安装启动或在线播放当作本构建验证步骤。
-
-中间 APK 位于 `build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk`；正式输出位于 `dist/android/`：红果鉴文件名为 `hongguojian-<pubspec.yaml 版本号>-armeabi-v7a.apk`，真果鉴为 `zhenguojian-<pubspec.yaml 版本号>-armeabi-v7a.apk`。打包器会检查该 APK 含有 `lib/armeabi-v7a/` 下的应用原生库。可用以下静态检查确认架构目录及关键库；真果鉴时把 `$APK` 文件名前缀改为 `zhenguojian`：
+`--abi` 仍会传给 Go 核心构建与 APK 打包；核心用 NDK Android API 26 编译器及 `GOARM=7`，Flutter 目标平台为 `android-arm` 并按 ABI 拆分。此流程只解析/下载构建依赖、编译和打包，不启动应用，也不请求红果或其他站源 API；不要把 `flutter run`、安装启动或在线播放当作构建验证步骤。APK 仍会检查 `lib/armeabi-v7a/` 下的关键原生库。
+可用以下静态检查确认架构目录及关键库；真果鉴时把 `$APK` 文件名前缀改为 `zhenguojian`：
 
 ~~~sh
-APK="dist/android/hongguojian-$(sed -n 's/^version: *//p' pubspec.yaml | head -n 1)-armeabi-v7a.apk"
+APK="$(ls -t dist/android/hongguojian-*-armeabi-v7a.apk 2>/dev/null | head -n 1)"
+test -n "$APK"
 python3 - "$APK" <<'PY'
 from pathlib import Path
 import sys

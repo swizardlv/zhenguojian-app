@@ -2,6 +2,10 @@ import base64
 from dataclasses import dataclass
 
 
+ANDROID_BASE_APPLICATION_ID = 'com.duanju.duanju_app'
+ANDROID_ALL_SOURCES_SUFFIX = '.zhenguojian'
+
+
 @dataclass(frozen=True)
 class BuildVariant:
     all_sources: bool = False
@@ -13,6 +17,14 @@ class BuildVariant:
     @property
     def slug(self):
         return 'zhenguojian' if self.all_sources else 'hongguojian'
+
+    @property
+    def android_application_id(self):
+        suffix = ANDROID_ALL_SOURCES_SUFFIX if self.all_sources else ''
+        return ANDROID_BASE_APPLICATION_ID + suffix
+
+    def android_artifact_filename(self, version_name, build_number, abi):
+        return f'{self.slug}-{version_name}+{build_number}-{abi}.apk'
 
     @property
     def arguments(self):

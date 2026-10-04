@@ -13,6 +13,7 @@ val dartDefines = providers.gradleProperty("dart-defines").orNull.orEmpty()
         decoded.substringBefore("=") to decoded.substringAfter("=", "")
     }
 val allSources = dartDefines["ALL_SOURCES"] == "true"
+val appApplicationId = if (allSources) "com.duanju.duanju_app.zhenguojian" else "com.duanju.duanju_app"
 
 val releaseKey = rootProject.file("key.properties")
 val releaseProperties = Properties()
@@ -31,7 +32,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.duanju.duanju_app"
+        applicationId = appApplicationId
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

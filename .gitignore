@@ -1,4 +1,5 @@
 .dart_tool/
+.build-meta/
 .flutter-plugins*
 .pub-cache/
 build/

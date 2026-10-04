@@ -13,6 +13,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--platform', choices=['android', 'windows'], required=True)
 parser.add_argument('--abi', action='append', choices=['arm64-v8a', 'armeabi-v7a', 'x86_64'])
+parser.add_argument('--build-number', type=int, help='Android build number supplied by build_android.py')
 add_variant_argument(parser)
 options = parser.parse_args()
 variant = BuildVariant(options.all_sources)
@@ -20,6 +21,12 @@ match = re.search(r'^version:\s*([\w.+-]+)\s*$', (root / 'pubspec.yaml').read_te
 if not match:
     raise SystemExit('pubspec.yaml 缺少合法版本号。')
 version = match.group(1)
+version_name = version.split('+', 1)[0]
+artifact_version = version
+if options.platform == 'android' and options.build_number is not None:
+    if options.build_number < 1:
+        raise SystemExit('Android build number must be positive.')
+    artifact_version = f'{version_name}+{options.build_number}'
 output = root / 'dist' / options.platform
 output.mkdir(parents=True, exist_ok=True)
 artifacts = []
@@ -36,7 +43,8 @@ if options.platform == 'android':
             missing = set(required) - names
             if missing:
                 raise SystemExit('APK 缺少原生库：' + ', '.join(sorted(missing)))
-        target = output / f'{variant.slug}-{version}-{abi}.apk'
+        build_number = options.build_number if options.build_number is not None else (version.split('+', 1)[1] if '+' in version else 0)
+        target = output / variant.android_artifact_filename(version_name, build_number, abi)
         shutil.copy2(source, target)
         artifacts.append(target)
 else:
@@ -74,7 +82,7 @@ else:
     artifacts.append(portable)
 
 checksums = []
-for artifact in sorted(output.glob(f'*-{version}-*')):
+for artifact in sorted(output.glob(f'*-{artifact_version}-*')):
     digest = hashlib.sha256()
     with artifact.open('rb') as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
