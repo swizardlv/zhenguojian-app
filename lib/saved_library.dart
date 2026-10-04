@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
 import 'catalog_sort.dart';
@@ -20,6 +21,7 @@ class SavedLibrary extends StatefulWidget {
     required this.onContinue,
     this.onDownload,
     this.remoteAutofocus = false,
+    this.searchFocusNode,
     this.onExitLeft,
     this.onExitUp,
   });
@@ -31,6 +33,7 @@ class SavedLibrary extends StatefulWidget {
   final ValueChanged<Drama> onContinue;
   final ValueChanged<Drama>? onDownload;
   final bool remoteAutofocus;
+  final FocusNode? searchFocusNode;
   final VoidCallback? onExitLeft;
   final VoidCallback? onExitUp;
 
@@ -40,11 +43,53 @@ class SavedLibrary extends StatefulWidget {
 
 class _SavedLibraryState extends State<SavedLibrary> {
   final _search = TextEditingController();
+  final _ownedSearchFocus = FocusNode(debugLabel: 'saved-library-search');
+  final _actionFocusNodes = <String, FocusNode>{};
   String _filter = '';
+
+  FocusNode get _searchFocus => widget.searchFocusNode ?? _ownedSearchFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchFocus.onKeyEvent = _onSearchKeyEvent;
+  }
+
+  @override
+  void didUpdateWidget(covariant SavedLibrary oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchFocusNode != widget.searchFocusNode) {
+      (oldWidget.searchFocusNode ?? _ownedSearchFocus).onKeyEvent = null;
+      _searchFocus.onKeyEvent = _onSearchKeyEvent;
+    }
+  }
+
+  KeyEventResult _onSearchKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent || !node.hasPrimaryFocus) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.goBack ||
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      node.unfocus();
+      widget.onExitLeft?.call();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  FocusNode _actionFocusNode(String id) => _actionFocusNodes.putIfAbsent(
+    id,
+    () => FocusNode(debugLabel: 'saved-action-$id'),
+  );
 
   @override
   void dispose() {
     _search.dispose();
+    _searchFocus.onKeyEvent = null;
+    _ownedSearchFocus.dispose();
+    for (final node in _actionFocusNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -84,6 +129,9 @@ class _SavedLibraryState extends State<SavedLibrary> {
   );
 
   Widget _tile(Drama drama, {FocusNode? focusNode, VoidCallback? onFocus}) {
+    final actionFocusNode = focusNode == null
+        ? null
+        : _actionFocusNode(drama.id);
     final watched = widget.store.watched(drama.id);
     final state = widget.store.following(drama.id);
     final badge = state == null
@@ -94,11 +142,13 @@ class _SavedLibraryState extends State<SavedLibrary> {
       drama: drama,
       repository: widget.repository,
       focusNode: focusNode,
+      actionFocusNode: actionFocusNode,
       onFocus: onFocus,
       onTap: () => widget.onOpen(drama),
       onMore: () => _actions(drama),
       actions: DramaActionButton(
         drama: drama,
+        focusNode: actionFocusNode,
         onPressed: () => _actions(drama),
       ),
       badge: badge,
@@ -162,6 +212,7 @@ class _SavedLibraryState extends State<SavedLibrary> {
               widget.history ? 'history-search' : 'favorites-search',
             ),
             controller: _search,
+            focusNode: _searchFocus,
             onChanged: (_) => setState(() {}),
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
@@ -171,7 +222,10 @@ class _SavedLibraryState extends State<SavedLibrary> {
                   ? null
                   : IconButton(
                       tooltip: '清空搜索',
-                      onPressed: () => setState(_search.clear),
+                      onPressed: () {
+                        setState(_search.clear);
+                        _searchFocus.requestFocus();
+                      },
                       icon: const Icon(Icons.close_rounded),
                     ),
             ),
@@ -232,6 +286,14 @@ class _SavedLibraryState extends State<SavedLibrary> {
         icon: widget.history
             ? Icons.history_rounded
             : Icons.bookmark_border_rounded,
+        secondaryAction: widget.remoteAutofocus && widget.onExitLeft != null
+            ? FilledButton.icon(
+                autofocus: widget.remoteAutofocus,
+                onPressed: widget.onExitLeft,
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('返回导航'),
+              )
+            : null,
       );
       return LayoutBuilder(
         builder: (context, constraints) {
@@ -254,14 +316,14 @@ class _SavedLibraryState extends State<SavedLibrary> {
                   child: items.isEmpty
                       ? empty
                       : RemoteGrid(
-                          key: ValueKey(
-                            'saved-tv-${widget.history}-$_filter-${_search.text}',
-                          ),
+                          key: ValueKey('saved-tv-${widget.history}'),
                           itemKeys: items.map((item) => item.id).toList(),
                           columns: columns,
                           itemExtent:
                               DramaTile.extentFor(context, tileWidth - 14) + 14,
-                          autofocus: widget.remoteAutofocus,
+                          autofocus:
+                              widget.remoteAutofocus &&
+                              !_searchFocus.hasPrimaryFocus,
                           onExitLeft: widget.onExitLeft,
                           onExitUp: widget.onExitUp,
                           itemBuilder: (_, index, node, onFocus) => _tile(

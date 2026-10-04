@@ -6,6 +6,7 @@ import 'package:duanju_app/follow_state.dart';
 import 'package:duanju_app/home_screen.dart';
 import 'package:duanju_app/local_store.dart';
 import 'package:duanju_app/models.dart';
+import 'package:duanju_app/remote_widgets.dart';
 import 'package:duanju_app/saved_library.dart';
 import 'package:duanju_app/widgets.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'library_feature_fixtures.dart';
+import 'remote_test_helpers.dart';
 
 void main() {
   const first = LibraryFeatureRepository.first;
@@ -87,6 +89,70 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('TV history and follow searches retain text-field focus', (
+    tester,
+  ) async {
+    viewport(tester, const Size(1920, 1080));
+    // This branch has a separate, known ~2px DramaTile height overflow; drain
+    // that layout exception so this test can assert only search focus behavior.
+    void drainKnownTileLayoutException() => tester.takeException();
+
+    for (final history in [true, false]) {
+      final store = await create();
+      if (history) {
+        await store.saveWatch(watch(first));
+        await store.saveWatch(watch(second));
+      } else {
+        await store.toggleFavorite(first);
+        await store.toggleFavorite(second);
+      }
+      await tester.pumpWidget(
+        televisionHost(
+          child: Scaffold(
+            body: SavedLibrary(
+              repository: LibraryFeatureRepository(),
+              store: store,
+              history: history,
+              remoteAutofocus: true,
+              onOpen: (_) {},
+              onContinue: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      drainKnownTileLayoutException();
+      final field = find.byKey(
+        ValueKey(history ? 'history-search' : 'favorites-search'),
+      );
+      final grid = find.byType(RemoteGrid);
+      expect(grid, findsOneWidget);
+      final gridKey = tester.widget<RemoteGrid>(grid).key;
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, '一号');
+      await tester.pumpAndSettle();
+      drainKnownTileLayoutException();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'saved-library-search',
+      );
+      expect(tester.widget<RemoteGrid>(grid).key, gridKey);
+      expect(find.byKey(ValueKey('saved-${first.id}')), findsOneWidget);
+      await tester.tap(find.byTooltip('清空搜索'));
+      await tester.pumpAndSettle();
+      drainKnownTileLayoutException();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'saved-library-search',
+      );
+      expect(tester.widget<RemoteGrid>(grid).key, gridKey);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'follow filters show unread updates until explicitly marked read',

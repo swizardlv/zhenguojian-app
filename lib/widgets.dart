@@ -329,6 +329,7 @@ class DramaTile extends StatelessWidget {
     this.focusNode,
     this.onFocus,
     this.actions,
+    this.actionFocusNode,
     this.badge,
     this.selected,
     this.onMore,
@@ -341,6 +342,7 @@ class DramaTile extends StatelessWidget {
   final FocusNode? focusNode;
   final VoidCallback? onFocus;
   final Widget? actions;
+  final FocusNode? actionFocusNode;
   final String? badge;
   final bool? selected;
   final VoidCallback? onMore;
@@ -359,7 +361,13 @@ class DramaTile extends StatelessWidget {
       1.3;
 
   static double extentFor(BuildContext context, double width) =>
-      (width * 1.5 + 13 + titleHeight(context) + subtitleHeight(context))
+      (width * 1.5 +
+              13 +
+              titleHeight(context) +
+              subtitleHeight(context) +
+              (AppLayout.isTelevision(context)
+                  ? remoteTargetDefaultPadding.vertical
+                  : 0))
           .ceilToDouble();
 
   @override
@@ -461,19 +469,47 @@ class DramaTile extends StatelessWidget {
       ],
     );
     if (television) {
-      return CallbackShortcuts(
+      final target = RemoteTarget(
+        focusNode: focusNode,
+        onFocus: onFocus,
+        onPressed: onTap,
+        selected: selected ?? false,
+        label:
+            '${drama.title}，${drama.episodes}集${badge == null ? '' : '，$badge'}',
+        excludeChildFocus: actionFocusNode == null || actions == null,
+        child: content,
+      );
+      final tile = CallbackShortcuts(
         bindings: {
           const SingleActivator(LogicalKeyboardKey.contextMenu): ?onMore,
         },
-        child: RemoteTarget(
-          focusNode: focusNode,
-          onFocus: onFocus,
-          onPressed: onTap,
-          selected: selected ?? false,
-          label:
-              '${drama.title}，${drama.episodes}集${badge == null ? '' : '，$badge'}',
-          child: content,
-        ),
+        child: target,
+      );
+      final focusTarget = focusNode;
+      final actionTarget = actionFocusNode;
+      if (focusTarget == null || actionTarget == null || actions == null) {
+        return tile;
+      }
+      return Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+            return KeyEventResult.ignored;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+              focusTarget.hasPrimaryFocus) {
+            actionTarget.requestFocus();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+              actionTarget.hasPrimaryFocus) {
+            focusTarget.requestFocus();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: tile,
       );
     }
     return Semantics(

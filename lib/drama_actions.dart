@@ -101,13 +101,16 @@ class DramaActionButton extends StatelessWidget {
     super.key,
     required this.drama,
     required this.onPressed,
+    this.focusNode,
   });
   final Drama drama;
   final VoidCallback onPressed;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) => IconButton.filledTonal(
     key: ValueKey('drama-actions-${drama.id}'),
+    focusNode: focusNode,
     tooltip: '${drama.title} · 更多操作',
     onPressed: onPressed,
     icon: const Icon(Icons.more_horiz_rounded, size: 20),

@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'search_input.dart';
 import 'app_layout.dart';
+
 import 'package:flutter/services.dart';
+
+const remoteTargetDefaultPadding = EdgeInsets.all(4);
 
 /// 遥控区域之间的方向越界出口：没有接管者时保持默认焦点遍历行为。
 KeyEventResult _remoteExit(VoidCallback? action, {bool handled = false}) {
@@ -35,9 +39,10 @@ class RemoteTarget extends StatefulWidget {
     this.selected = false,
     this.label,
     this.radius = 14,
-    this.padding = const EdgeInsets.all(4),
-    this.borderWidth = 3,
+    this.padding = remoteTargetDefaultPadding,
+    this.borderWidth = 2,
     this.outlined = false,
+    this.excludeChildFocus = true,
   });
   final Widget child;
   final VoidCallback? onPressed;
@@ -50,6 +55,7 @@ class RemoteTarget extends StatefulWidget {
   final EdgeInsetsGeometry padding;
   final double borderWidth;
   final bool outlined;
+  final bool excludeChildFocus;
 
   @override
   State<RemoteTarget> createState() => _RemoteTargetState();
@@ -57,6 +63,35 @@ class RemoteTarget extends StatefulWidget {
 
 class _RemoteTargetState extends State<RemoteTarget> {
   bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode?.addListener(_syncPrimaryFocus);
+  }
+
+  void _syncPrimaryFocus() {
+    final focusNode = widget.focusNode;
+    if (!mounted || focusNode == null) return;
+    final focused = focusNode.hasPrimaryFocus;
+    if (_focused != focused) setState(() => _focused = focused);
+  }
+
+  @override
+  void didUpdateWidget(covariant RemoteTarget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode?.removeListener(_syncPrimaryFocus);
+      widget.focusNode?.addListener(_syncPrimaryFocus);
+      _focused = widget.focusNode?.hasPrimaryFocus ?? false;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode?.removeListener(_syncPrimaryFocus);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => FocusableActionDetector(
@@ -73,7 +108,7 @@ class _RemoteTargetState extends State<RemoteTarget> {
     },
     onFocusChange: (focused) {
       if (mounted) {
-        setState(() => _focused = focused);
+        setState(() => _focused = widget.focusNode?.hasPrimaryFocus ?? focused);
       }
       if (focused) {
         widget.onFocus?.call();
@@ -103,26 +138,41 @@ class _RemoteTargetState extends State<RemoteTarget> {
             duration: const Duration(milliseconds: 120),
             padding: widget.padding,
             decoration: BoxDecoration(
-              color: widget.selected
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : _focused && widget.outlined
-                  ? Theme.of(context).colorScheme.surfaceContainerHighest
-                  : _focused
-                  ? Theme.of(context).colorScheme.primaryContainer
+              color: _focused
+                  ? widget.outlined
+                        ? Theme.of(context).colorScheme.surfaceContainerHighest
+                        : Theme.of(context).colorScheme.primaryContainer
+                  : widget.selected
+                  ? Theme.of(context).colorScheme.surfaceContainerLow
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(widget.radius),
               border: Border.all(
                 color: _focused
                     ? Theme.of(context).colorScheme.primary
-                    : widget.selected
-                    ? Theme.of(context).colorScheme.primary
-                    : widget.outlined
+                    : widget.selected || widget.outlined
                     ? Theme.of(context).colorScheme.outlineVariant
                     : Colors.transparent,
-                width: widget.borderWidth,
+                width: _focused
+                    ? widget.borderWidth
+                    : widget.selected || widget.outlined
+                    ? 1
+                    : 0,
               ),
+              boxShadow: _focused
+                  ? [
+                      BoxShadow(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.16),
+                        blurRadius: 6,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
             ),
-            child: ExcludeFocus(child: widget.child),
+            child: widget.excludeChildFocus
+                ? ExcludeFocus(child: widget.child)
+                : widget.child,
           ),
         ),
       ),
@@ -258,19 +308,31 @@ class RemoteGridState extends State<RemoteGrid> {
     final generation = ++_generation;
     _target = widget.itemKeys[index];
     final node = _node(index);
+    final top =
+        widget.padding.top +
+        (index ~/ widget.columns) * (widget.itemExtent + widget.spacing);
+    if (_scroll.hasClients) {
+      final position = _scroll.position;
+      final bottom = top + widget.itemExtent;
+      final double? targetOffset;
+      if (top < position.pixels) {
+        targetOffset = top;
+      } else if (bottom > position.pixels + position.viewportDimension) {
+        targetOffset = bottom - position.viewportDimension;
+      } else {
+        targetOffset = null;
+      }
+      if (targetOffset != null) {
+        final offset = targetOffset
+            .clamp(0.0, position.maxScrollExtent)
+            .toDouble();
+        if (offset != position.pixels) _scroll.jumpTo(offset);
+      }
+    }
     if (node.context != null) {
       node.requestFocus();
       _target = null;
       return;
-    }
-    if (_scroll.hasClients) {
-      final top =
-          widget.padding.top +
-          (index ~/ widget.columns) * (widget.itemExtent + widget.spacing);
-      final offset = top < _scroll.offset
-          ? top
-          : top + widget.itemExtent - _scroll.position.viewportDimension;
-      _scroll.jumpTo(offset.clamp(0.0, _scroll.position.maxScrollExtent));
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && generation == _generation && node.context != null) {
@@ -430,6 +492,29 @@ class RemoteRowState extends State<RemoteRow> {
     () => FocusNode(debugLabel: 'remote-row-${widget.itemKeys[index]}'),
   );
 
+  void _ensureVisible(FocusNode node) {
+    if (!_scroll.hasClients) return;
+    final target = node.context?.findRenderObject();
+    if (target == null || !target.attached) return;
+    final viewport = RenderAbstractViewport.maybeOf(target);
+    if (viewport == null) return;
+    final position = _scroll.position;
+    final leading = viewport.getOffsetToReveal(target, 0).offset;
+    final trailing = viewport.getOffsetToReveal(target, 1).offset;
+    final double? alignment = position.pixels < trailing
+        ? 1
+        : position.pixels > leading
+        ? 0
+        : null;
+    if (alignment != null) {
+      position.ensureVisible(
+        target,
+        alignment: alignment,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -462,12 +547,14 @@ class RemoteRowState extends State<RemoteRow> {
     if (node.context != null) {
       node.requestFocus();
       _target = null;
+      _ensureVisible(node);
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && node.context != null) {
         node.requestFocus();
         _target = null;
+        _ensureVisible(node);
       }
     });
   }
@@ -629,6 +716,12 @@ class RemoteListState extends State<RemoteList> {
 
   void focusCurrent() {
     final index = _currentIndex;
+    if (index >= 0) _focusAt(index);
+  }
+
+  /// Focus a stable key when returning to the selected navigation section.
+  void focusItem(String itemKey) {
+    final index = widget.itemKeys.indexOf(itemKey);
     if (index >= 0) _focusAt(index);
   }
 

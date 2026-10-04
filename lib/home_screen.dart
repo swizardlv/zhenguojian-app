@@ -66,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _cacheRefreshTimer;
   bool _refreshingUpdatedCache = false;
   bool _selectionMode = false;
+  bool _exitPromptOpen = false;
   bool _showRecommendations = false;
   bool _catalogLoadScheduled = false;
   final _filtersKey = GlobalKey<RemoteRowState>();
@@ -73,6 +74,12 @@ class _HomeScreenState extends State<HomeScreen> {
   final _navKey = GlobalKey<RemoteListState>();
   final _appBarFocus = FocusNode(debugLabel: 'tv-appbar');
   final _selectionFocus = FocusNode(debugLabel: 'tv-selection');
+  final _historySearchFocus = FocusNode(debugLabel: 'history-search');
+  final _favoritesSearchFocus = FocusNode(debugLabel: 'favorites-search');
+  final _downloadsSearchFocus = FocusNode(debugLabel: 'downloads-search');
+  final _catalogVipFocus = FocusNode(debugLabel: 'catalog-vip-filter');
+  final _catalogSearchFocus = FocusNode(debugLabel: 'search-field');
+  final _actionFocusNodes = <String, FocusNode>{};
 
   List<SourceGroup> get _sourceGroups {
     final groups = SourceGroup.fromSources(widget.store.sources);
@@ -383,14 +390,91 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _televisionBack() {
+  void _focusNavigationItem(String itemKey) {
+    if (!AppLayout.isTelevision(context)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _navKey.currentState?.focusItem(itemKey);
+    });
+  }
+
+  void _handleRootBack() {
+    if (_exitPromptOpen) return;
     if (_selectionMode) {
       _cancelSelection();
-    } else if (_tab != 0) {
+      _focusNavigationItem('$_tab');
+      return;
+    }
+    if (_historySearchFocus.hasFocus) {
+      _historySearchFocus.unfocus();
+      _focusNavigationItem('$_tab');
+      return;
+    }
+    if (_favoritesSearchFocus.hasFocus) {
+      _favoritesSearchFocus.unfocus();
+      _focusNavigationItem('$_tab');
+      return;
+    }
+    if (_downloadsSearchFocus.hasFocus) {
+      _downloadsSearchFocus.unfocus();
+      _focusNavigationItem('$_tab');
+      return;
+    }
+    if (_catalogSearchFocus.hasFocus) {
+      _catalogSearchFocus.unfocus();
+      _focusNavigationItem('$_tab');
+      return;
+    }
+    if (_showRecommendations) {
+      setState(() => _showRecommendations = false);
+      if (AppLayout.isTelevision(context)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _filtersKey.currentState?.focusCurrent();
+        });
+      }
+      return;
+    }
+    if (_tab != 0) {
       setState(() => _tab = 0);
-    } else if (_search.text.isNotEmpty) {
+      _focusNavigationItem('0');
+      return;
+    }
+    if (_search.text.isNotEmpty) {
       _search.clear();
       _searchChanged('');
+      return;
+    }
+    unawaited(_confirmApplicationExit());
+  }
+
+  Future<void> _confirmApplicationExit() async {
+    if (!mounted || _exitPromptOpen) return;
+    _exitPromptOpen = true;
+    try {
+      final shouldExit = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('退出应用？'),
+            content: const Text('确定要退出当前应用吗？'),
+            actions: [
+              TextButton(
+                autofocus: AppLayout.isTelevision(dialogContext),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('退出'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (shouldExit == true && mounted) await SystemNavigator.pop();
+    } finally {
+      _exitPromptOpen = false;
     }
   }
 
@@ -432,6 +516,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _scroll.dispose();
     _appBarFocus.dispose();
     _selectionFocus.dispose();
+    _historySearchFocus.dispose();
+    _favoritesSearchFocus.dispose();
+    _downloadsSearchFocus.dispose();
+    _catalogVipFocus.dispose();
+    _catalogSearchFocus.dispose();
+    for (final node in _actionFocusNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -706,6 +798,12 @@ class _HomeScreenState extends State<HomeScreen> {
     FocusNode? focusNode,
     VoidCallback? onFocus,
   }) {
+    final actionFocusNode = focusNode == null || _selectionMode
+        ? null
+        : _actionFocusNodes.putIfAbsent(
+            drama.id,
+            () => FocusNode(debugLabel: 'catalog-action-${drama.id}'),
+          );
     final following = widget.store.following(drama.id);
     final canSelect =
         widget.store.canDownload && widget.repository.supportsDownloads;
@@ -714,12 +812,14 @@ class _HomeScreenState extends State<HomeScreen> {
       drama: drama,
       repository: widget.repository,
       focusNode: focusNode,
+      actionFocusNode: actionFocusNode,
       onFocus: onFocus,
       onTap: () => _selectionMode ? _selectDrama(drama) : _openDrama(drama),
       onLongPress: canSelect ? () => _selectDrama(drama) : null,
       onMore: () => _dramaActions(drama),
       actions: DramaActionButton(
         drama: drama,
+        focusNode: actionFocusNode,
         onPressed: () => _dramaActions(drama),
       ),
       selected: _selectionMode ? _selectedDramas.containsKey(drama.id) : null,
@@ -762,6 +862,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }),
       widget.store.catalogView,
     );
+  }
+
+  String get _emptyCatalogMessage {
+    final guidance = _hideVip
+        ? '可以换个搜索词，或显示 VIP 内容。'
+        : widget.store.sources.length > 1
+        ? '可以换个搜索词或切换站源。'
+        : '可以换个搜索词，或刷新后重试。';
+    return _error == null ? guidance : '$_error\n$guidance';
   }
 
   @override
@@ -1064,6 +1173,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           repository: widget.repository,
                           store: widget.store,
                           embedded: true,
+                          searchFocusNode: _downloadsSearchFocus,
                         )
                       : SavedLibrary(
                           key: ValueKey('saved-tab-$_tab'),
@@ -1071,8 +1181,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           store: widget.store,
                           history: _tab == 2,
                           remoteAutofocus: television,
+                          searchFocusNode: _tab == 2
+                              ? _historySearchFocus
+                              : _tab == 1
+                              ? _favoritesSearchFocus
+                              : null,
                           onExitLeft: television
-                              ? () => _navKey.currentState?.focusCurrent()
+                              ? () => _navKey.currentState?.focusItem('$_tab')
                               : null,
                           onOpen: _openDrama,
                           onContinue: (drama) =>
@@ -1118,13 +1233,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
         );
-        if (!television && !_selectionMode) return scaffold;
         return PopScope(
-          canPop:
-              !_selectionMode &&
-              (!television || _tab == 0 && _search.text.isEmpty),
+          canPop: false,
           onPopInvokedWithResult: (didPop, result) {
-            if (!didPop) _televisionBack();
+            if (!didPop) _handleRootBack();
           },
           child: CallbackShortcuts(
             bindings: {
@@ -1151,6 +1263,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: SearchInput(
               key: ValueKey('search-${_group.id}'),
               controller: _search,
+              focusNode: _catalogSearchFocus,
               autofocus: true,
               hint: _searchHint,
               suggestions: _searchSuggestions
@@ -1204,11 +1317,20 @@ class _HomeScreenState extends State<HomeScreen> {
           category: _displayCategory,
           error: _categoriesError,
           remoteKey: _filtersKey,
+          onExitLeft: television
+              ? () => _navKey.currentState?.focusItem('$_tab')
+              : null,
           onExitUp: television && _selectionMode
               ? () => _appBarFocus.requestFocus()
               : null,
           onExitDown: television
               ? () => _gridKey.currentState?.focusCurrent()
+              : null,
+          onExitRight: television
+              ? () => _gridKey.currentState?.focusCurrent()
+              : null,
+          trailingFocusNode: television && _supportsVipFilter
+              ? _catalogVipFocus
               : null,
           onCategory: _changeCategory,
           onRetry: () => _loadCategories(force: true),
@@ -1217,6 +1339,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               if (_supportsVipFilter)
                 IconButton(
+                  focusNode: television ? _catalogVipFocus : null,
                   tooltip: widget.store.hideVip ? 'VIP：隐藏' : 'VIP：显示',
                   onPressed: () => saveUserChange(
                     context,
@@ -1237,7 +1360,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 embedded: true,
                 gridKey: _gridKey,
                 onExitLeft: television
-                    ? () => _navKey.currentState?.focusCurrent()
+                    ? () => _navKey.currentState?.focusItem('$_tab')
                     : null,
               ),
             ),
@@ -1276,11 +1399,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   : items.isEmpty
                   ? StatusPanel(
                       title: '没有找到匹配的短剧',
-                      message: _hideVip
-                          ? '可以换个搜索词，或显示 VIP 内容。'
-                          : widget.store.sources.length > 1
-                          ? '可以换个搜索词或切换站源。'
-                          : '可以换个搜索词，或刷新后重试。',
+                      message: _emptyCatalogMessage,
                       onRetry:
                           _hasMore &&
                               !_loadingMore &&
@@ -1477,7 +1596,7 @@ class _HomeScreenState extends State<HomeScreen> {
       footer: footer,
       padding: const EdgeInsets.fromLTRB(18, 2, 18, 18),
       onExitUp: () => _filtersKey.currentState?.focusCurrent(),
-      onExitLeft: () => _navKey.currentState?.focusCurrent(),
+      onExitLeft: () => _navKey.currentState?.focusItem('$_tab'),
       onExitDown: _selectionMode ? () => _selectionFocus.requestFocus() : null,
       itemBuilder: (_, index, node, onFocus) =>
           _catalogTile(items[index], focusNode: node, onFocus: onFocus),

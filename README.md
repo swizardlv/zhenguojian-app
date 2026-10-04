@@ -742,6 +742,69 @@ python3 scripts/build_android.py --cn-mirrors
 
 首条默认生成红果鉴，第二条生成含全部站源的真果鉴。`--all-sources` 可以与 `--abi`、`--cn-mirrors` 组合，例如 `python3 scripts/build_android.py --all-sources --abi arm64-v8a --cn-mirrors`。
 
+
+### Android 32 位 ARMv7（`armeabi-v7a`）
+
+本项目 Android 工程只有一个 `app` 配置，没有独立的 `productFlavors`。手机与 Android TV 使用同一 APK；Manifest 同时提供普通启动器和可选 Leanback 启动入口，电视界面由运行时模式适配，不需要另一个 TV APK 或 TV flavor。
+
+可复现构建环境以仓库 CI 和锁定配置为准：Flutter stable `3.47.4`（Dart `3.12+`）、Go `1.24.1+`（版本下限见 `native/go.mod`）、Python `3.12`、Temurin JDK `17`、Android SDK `36`、Android NDK `28.2.13676358`。Android Gradle Plugin 为 `9.1.0`，Gradle Wrapper 为 `9.3.1`，Kotlin Gradle Plugin 为 `2.4.0`。使用 Android SDK Command-line Tools 并先接受 SDK licenses；设置 `ANDROID_HOME`（或 `ANDROID_SDK_ROOT`），NDK 默认从 `$ANDROID_HOME/ndk/28.2.13676358` 读取，也可通过 `ANDROID_NDK_HOME` 指定。Dart 依赖按仓库 `pubspec.lock` 锁定，构建脚本使用 `flutter pub get --enforce-lockfile`。
+
+从仓库根目录明确指定 32 位 ABI；默认不传 `--all-sources` 仍构建红果鉴，真果鉴需显式加入该参数：
+
+~~~sh
+python3 scripts/build_android.py --abi armeabi-v7a
+python3 scripts/build_android.py --all-sources --abi armeabi-v7a
+~~~
+
+如需重复执行全站源 ARMv7 构建，可在仓库根目录直接运行下列命令；从其他工作目录调用时，使用该克隆的绝对或相对脚本路径，脚本会根据自身位置定位仓库根目录：
+~~~sh
+scripts/build_android_armv7.sh
+scripts/build_android_armv7.sh --cn-mirrors
+~~~
+脚本会定位仓库根目录、检查 Python、Flutter、Go（`1.24.1+`）、JDK 17、Android SDK Platform 36 及 NDK 28.2.13676358，并调用现有 `scripts/build_android.py`；它固定加入 `--abi armeabi-v7a --all-sources`，不改变现有构建器的默认发布行为，也不含机器专用 SDK 路径或签名凭据。构建依赖需预先安装；SDK 通过 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 指定，非默认位置的 NDK 可用 `ANDROID_NDK_HOME` 指定。额外参数原样传给构建器，例如 `--cn-mirrors`；构建器的 `--abi` 为追加选项，若再传其他 ABI 会额外生成对应分包，单独 ARMv7 构建请勿追加其他 ABI。
+
+默认中间 APK 位于 `build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk`，打包后的全站源 APK 位于 `dist/android/zhenguojian-<pubspec.yaml 版本号>-armeabi-v7a.apk`。该包装脚本不创建或更改签名文件：`android/key.properties` 存在时使用其中配置的证书；否则沿用 Gradle 本机 debug 测试证书。安装测试包前应确认签名适合目标设备上已有的应用；测试证书不适用于正式发布。
+
+`--abi` 会传给原生 Go 核心构建和 APK 打包；原生构建使用 NDK 的 Android API 26 编译器及 `GOARM=7`，Flutter 目标平台为 `android-arm`，并生成按 ABI 拆分的 Release APK。只传 `--abi armeabi-v7a` 时不会改动脚本默认的红果鉴发布行为；不传 `--abi` 仍沿用原先构建所有支持 ABI 的行为。此流程只下载/解析构建依赖、编译和打包，不启动应用，也不请求红果或其他站源 API；不要把 `flutter run`、安装启动或在线播放当作本构建验证步骤。
+
+中间 APK 位于 `build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk`；正式输出位于 `dist/android/`：红果鉴文件名为 `hongguojian-<pubspec.yaml 版本号>-armeabi-v7a.apk`，真果鉴为 `zhenguojian-<pubspec.yaml 版本号>-armeabi-v7a.apk`。打包器会检查该 APK 含有 `lib/armeabi-v7a/` 下的应用原生库。可用以下静态检查确认架构目录及关键库；真果鉴时把 `$APK` 文件名前缀改为 `zhenguojian`：
+
+~~~sh
+APK="dist/android/hongguojian-$(sed -n 's/^version: *//p' pubspec.yaml | head -n 1)-armeabi-v7a.apk"
+python3 - "$APK" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+apk = Path(sys.argv[1])
+if not apk.is_file():
+    raise SystemExit(f'APK not found: {apk}')
+required = {
+    'lib/armeabi-v7a/libduanju_core.so',
+    'lib/armeabi-v7a/libflutter.so',
+    'lib/armeabi-v7a/libapp.so',
+    'lib/armeabi-v7a/libmpv.so',
+    'lib/armeabi-v7a/libffmpegkit.so',
+}
+with zipfile.ZipFile(apk) as archive:
+    names = set(archive.namelist())
+    abis = {name.split('/')[1] for name in names
+            if name.startswith('lib/') and name.count('/') >= 2}
+missing = sorted(required - names)
+if missing or abis != {'armeabi-v7a'}:
+    raise SystemExit(f'ABI check failed: missing={missing}, ABI directories={sorted(abis)}')
+print(f'{apk}: armeabi-v7a only; required native libraries are present')
+PY
+SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Set ANDROID_HOME or ANDROID_SDK_ROOT}}"
+BUILD_TOOLS="$(find "$SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+MIN_SDK="$("$SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" manifest min-sdk "$APK")"
+test "$MIN_SDK" = "26"
+printf 'minSdk=%s\n' "$MIN_SDK"
+"$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+~~~
+
+Android `minSdk` 当前为 `26`（Android 8.0）；32 位设备也必须满足该最低版本。若 `android/key.properties` 不存在，Gradle 会用本机默认 debug keystore 对 Release 包签名；这只是测试证书，不适合作为正式发布或覆盖已有正式安装的签名。该文件和 keystore 已被 `.gitignore` 排除，不要提交或分享；正式发布应使用受控发布密钥，并通过证书检查确认签名。构建成功和 ABI 检查通过不代表 TV 遥控器已验收：本轮不启动模拟器或设备，电视方向键、焦点与播放操作仍需另行在实机验证。当前主线没有根目录 `LICENSE` 文件；分发 APK 前须确认项目再分发授权并核对随包 Flutter/原生媒体依赖各自的许可证与声明，公开可见或成功编译不等于获得分发权。
+
 Windows PowerShell：
 
 ~~~powershell

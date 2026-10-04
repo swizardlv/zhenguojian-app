@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'catalog_sort.dart';
 import 'core_bridge.dart';
 import 'models.dart';
 
@@ -164,7 +165,8 @@ class CatalogBrowser {
     bool cacheOnly = false,
     void Function(CatalogPage)? onCached,
   }) async {
-    if (cacheOnly && (more || force || query.trim().isNotEmpty)) {
+    final normalizedQuery = query.trim();
+    if (cacheOnly && (more || force || normalizedQuery.isNotEmpty)) {
       throw AppFailure('缓存读取不能同时请求搜索或续页');
     }
     final request = ++_generation;
@@ -173,13 +175,16 @@ class CatalogBrowser {
     }
     await repository.cancelCatalog();
     if (request != _generation) throw AppFailure('已取消加载');
-    final choice = query.isEmpty ? _choice(group, category) : null;
+    final choice = normalizedQuery.isEmpty ? _choice(group, category) : null;
     final requests = choice != null && !choice.category.local
         ? choice.requests
-        : {for (final source in group.sources) source.id: ''};
+        : {
+            for (final source in group.sources)
+              if (normalizedQuery.isEmpty || source.onlineSearch) source.id: '',
+          };
     final key =
         '${group.sources.map((s) => s.id).join(',')}|'
-        '${choice?.category.local == false ? category : ''}|$query';
+        '${choice?.category.local == false ? category : ''}|$normalizedQuery';
     final session = _sessions.putIfAbsent(key, _CatalogSession.new);
     final generation = ++session.generation;
     final failures = <String, String>{};
@@ -208,6 +213,16 @@ class CatalogBrowser {
             }
           }
         }
+      } else if (normalizedQuery.isNotEmpty) {
+        for (final source in group.sources.where(
+          (entry) => !entry.onlineSearch,
+        )) {
+          for (final item in _library[source.id]?.values ?? const <Drama>[]) {
+            if (matchesDramaQuery(item, normalizedQuery)) {
+              items.putIfAbsent(item.id, () => item);
+            }
+          }
+        }
       }
       return CatalogPage(
         items.values.toList(),
@@ -221,7 +236,7 @@ class CatalogBrowser {
       );
     }
 
-    if ((useCache || cacheOnly) && !force && !more && query.isEmpty) {
+    if ((useCache || cacheOnly) && !force && !more && normalizedQuery.isEmpty) {
       await _each(sourceOrder, (source) async {
         try {
           final cached = await repository.cached(
@@ -258,7 +273,7 @@ class CatalogBrowser {
         final result = await repository.catalog(
           source,
           category: requests[source]!,
-          query: query,
+          query: normalizedQuery,
           page: page,
           force: force,
         );
@@ -272,10 +287,10 @@ class CatalogBrowser {
         entry.page = result.page;
         entry.nextPage = result.warning.isEmpty ? result.page + 1 : page;
         entry.hasMore =
-            (query.isEmpty || SourceSite.byId(source).pagedSearch) &&
+            (normalizedQuery.isEmpty || SourceSite.byId(source).pagedSearch) &&
             (result.hasMore || result.warning.isNotEmpty);
         entry.fresh = result.fresh && result.warning.isEmpty;
-        if (query.isEmpty) _remember(source, result.items);
+        if (normalizedQuery.isEmpty) _remember(source, result.items);
         if (result.warning.isNotEmpty) {
           failures[source] = result.warning;
         } else {
@@ -284,7 +299,8 @@ class CatalogBrowser {
       } catch (error) {
         if (generation != session.generation) return;
         entry.nextPage = page;
-        entry.hasMore = query.isEmpty || SourceSite.byId(source).pagedSearch;
+        entry.hasMore =
+            normalizedQuery.isEmpty || SourceSite.byId(source).pagedSearch;
         entry.fresh = false;
         failures[source] = error.toString();
       }

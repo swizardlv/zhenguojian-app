@@ -22,12 +22,14 @@ class DownloadsScreen extends StatefulWidget {
     required this.store,
     this.embedded = false,
     this.playerBuilder,
+    this.searchFocusNode,
   });
   final AppRepository repository;
   final LocalStore store;
   final bool embedded;
   @visibleForTesting
   final Widget Function(DramaDetail, int, double)? playerBuilder;
+  final FocusNode? searchFocusNode;
   @override
   State<DownloadsScreen> createState() => _DownloadsScreenState();
 }
@@ -40,6 +42,8 @@ class _CollectionMenu {
 class _DownloadsScreenState extends State<DownloadsScreen> {
   Timer? _timer;
   final _search = TextEditingController();
+  final _ownedSearchFocus = FocusNode(debugLabel: 'downloads-search');
+  FocusNode get _searchFocus => widget.searchFocusNode ?? _ownedSearchFocus;
   final _selected = <String>{};
   final _expanded = <String>{};
   final _listKey = GlobalKey<RemoteListState>();
@@ -85,6 +89,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     _stopBatch = true;
     _timer?.cancel();
     _search.dispose();
+    _ownedSearchFocus.dispose();
     widget.store.removeListener(_changed);
     _updater.removeListener(_changed);
     _updater.dispose();
@@ -1055,7 +1060,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             child: TextField(
+              key: const ValueKey('downloads-search'),
               controller: _search,
+              focusNode: _searchFocus,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 hintText: '搜索剧名、站源或分类',
@@ -1064,7 +1071,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                     ? null
                     : IconButton(
                         tooltip: '清空搜索',
-                        onPressed: () => setState(_search.clear),
+                        onPressed: () {
+                          setState(_search.clear);
+                          _searchFocus.requestFocus();
+                        },
                         icon: const Icon(Icons.close_rounded),
                       ),
               ),

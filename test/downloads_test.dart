@@ -309,6 +309,113 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('downloads search filters local collections and clear restores', (
+    tester,
+  ) async {
+    size(tester, const Size(360, 760));
+    final repository = DownloadRepository();
+    final matching = Drama(
+      id: 'huangdou:search-match',
+      source: 'huangdou',
+      title: '关键词命中',
+      category: '都市',
+    );
+    final other = Drama(
+      id: 'hongguo:search-other',
+      source: 'hongguo',
+      title: '其他标题',
+      category: '校园',
+    );
+    repository.jobs = [
+      for (final entry in [(matching, 'search-1'), (other, 'search-2')])
+        DownloadJob(
+          id: entry.$2,
+          drama: entry.$1,
+          episode: repository.episode(1),
+          state: 'completed',
+          bytes: 1024,
+          total: 1024,
+          progress: 1,
+          actualQuality: 1080,
+        ),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: DownloadsScreen(repository: repository, store: await makeStore()),
+      ),
+    );
+    await tick(tester);
+    final search = find.byType(TextField);
+    expect(search, findsOneWidget);
+    await tester.enterText(search, '关键词');
+    await tester.pumpAndSettle();
+    expect(find.text('关键词命中'), findsOneWidget);
+    expect(find.text('其他标题'), findsNothing);
+
+    await tester.tap(find.byTooltip('清空搜索'));
+    await tester.pumpAndSettle();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'downloads-search');
+    expect(find.text('关键词命中'), findsOneWidget);
+    expect(find.text('其他标题'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'TV downloads search dialog applies D-pad query to local collections',
+    (tester) async {
+      size(tester, const Size(1280, 720));
+      final repository = DownloadRepository();
+      final matching = Drama(
+        id: 'huangdou:tv-search-match',
+        source: 'huangdou',
+        title: '电视搜索命中',
+        category: '都市',
+      );
+      final other = Drama(
+        id: 'hongguo:tv-search-other',
+        source: 'hongguo',
+        title: '电视其他剧',
+        category: '校园',
+      );
+      repository.jobs = [
+        for (final entry in [(matching, 'tv-search-1'), (other, 'tv-search-2')])
+          DownloadJob(
+            id: entry.$2,
+            drama: entry.$1,
+            episode: repository.episode(1),
+            state: 'completed',
+            bytes: 1024,
+            total: 1024,
+            progress: 1,
+            actualQuality: 1080,
+          ),
+      ];
+      await tester.pumpWidget(
+        televisionHost(
+          child: DownloadsScreen(
+            repository: repository,
+            store: await makeStore(),
+          ),
+        ),
+      );
+      await tick(tester);
+      await tester.tap(find.text('搜索').first);
+      await tester.pumpAndSettle();
+      final search = find.byType(TextField);
+      expect(search, findsOneWidget);
+      await tester.enterText(search, '电视搜索');
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      expect(find.text('电视搜索命中'), findsOneWidget);
+      expect(find.text('电视其他剧'), findsNothing);
+      expect(find.text('输入剧名'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('queue controls, filtering and deletion work on a narrow phone', (
     tester,
   ) async {

@@ -89,5 +89,31 @@ class AppBuildTests(unittest.TestCase):
                     self.assertIn('core.buildAllSources=' + str(enabled).lower(), BuildVariant(enabled).linker_flags)
 
 
+    def test_android_armv7_target_is_forwarded_without_building_or_launching(self):
+        script = Path(__file__).resolve().parent / 'build_android.py'
+        arguments = [str(script), '--all-sources', '--abi', 'armeabi-v7a']
+        with mock.patch.object(sys, 'argv', arguments), \
+                mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
+                mock.patch('shutil.which', return_value='/tools/flutter'), \
+                mock.patch('subprocess.run') as run:
+            runpy.run_path(str(script), run_name='__main__')
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(calls), 4)
+        native = next(
+            call for call in calls
+            if any(str(arg).endswith('build_native.py') for arg in call))
+        flutter = next(call for call in calls if 'build' in call)
+        package = next(
+            call for call in calls
+            if any(str(arg).endswith('package_release.py') for arg in call))
+        self.assertEqual(native[native.index('--abi') + 1], 'armeabi-v7a')
+        self.assertIn('--all-sources', native)
+        self.assertEqual(
+            flutter[flutter.index('--target-platform') + 1], 'android-arm')
+        self.assertIn('--split-per-abi', flutter)
+        self.assertIn('--dart-define=ALL_SOURCES=true', flutter)
+        self.assertEqual(package[package.index('--abi') + 1], 'armeabi-v7a')
+        self.assertIn('--all-sources', package)
+
 if __name__ == '__main__':
     unittest.main()
