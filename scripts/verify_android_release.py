@@ -10,7 +10,7 @@ from app_build import BuildVariant, add_variant_argument
 
 
 root = Path(__file__).resolve().parents[1]
-certificate = '872c569de39fce8ceb34a81bdd10e798d2019c79420750ae1bc79d5c5e74c3c9'
+certificate = 'd0af8f305e4ae161308fbd050d907c57613662500f574f50da1e7b0d72f44885'
 
 
 def android_tool(name):

@@ -712,6 +712,14 @@ Android 正式发布持续使用同一签名并递增构建号，在仓库 Secre
 | `ANDROID_KEY_ALIAS` | 密钥别名 |
 | `ANDROID_KEY_PASSWORD` | 密钥密码 |
 
+四个 Secret 必须同时配置；`scripts/configure_signing.py` 缺任一项会直接退出。这四个值来自同一个 JKS 文件，更换任意一个时四项需一起更换。
+
+`scripts/verify_android_release.py` 中的 `certificate` 常量是固定发布证书的 SHA-256 指纹，APK 校验时逐个比对。更换签名文件必须同步更新该常量，否则构建停在“APK 签名证书不匹配”。当前指纹：
+
+~~~
+d0af8f305e4ae161308fbd050d907c57613662500f574f50da1e7b0d72f44885
+~~~
+
 未配置时生成预览 APK，不同构建机的预览签名可能无法相互覆盖。创建签名文件并保存到项目外：
 
 ~~~sh
